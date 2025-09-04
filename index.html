@@ -150,19 +150,15 @@
     </div>
 
     <div class="alert alert-warning">
-        **Instructions to fix "Failed to fetch" errors:**
-        <ol class="mt-2">
-            <li>Ensure you have Python installed.</li>
-            <li>In the same folder as this file, create a new file named `server.py` and paste the provided Python code into it.</li>
-            <li>Open a command line or terminal, navigate to that folder, and install the `requests` library by typing: <code class="bg-gray-700 p-1 rounded">pip install requests</code></li>
-            <li>Run the proxy server by typing: <code class="bg-gray-700 p-1 rounded">python server.py</code></li>
-            <li>Leave this terminal window open while you use the tool.</li>
-        </ol>
+        <h3 class="font-bold">Important: Bot Permissions</h3>
+        <p class="mt-2">This tool requires specific permissions and intents to work correctly. The `403 Forbidden` error indicates that your bot is missing these.</p>
+        <p class="mt-2">Under **Bot** settings in the Discord Developer Portal, enable the **SERVER MEMBERS INTENT** and ensure your bot has the **Send Messages** permission. </p>
+        <p class="mt-2">You may need to re-add your bot to the server after enabling these intents.</p>
     </div>
 
     <div class="input-group">
         <label for="token">Discord Bot Token</label>
-        <input type="text" id="token" placeholder="Enter your bot token...">
+        <input type="password" id="token" placeholder="Enter your bot token...">
         <div class="alert alert-warning mt-2">
             **Warning**: Do not share this token. It gives full control of your bot.
         </div>
@@ -195,8 +191,7 @@
     const statusText = document.getElementById('statusText');
     
     // Point the API base URL to the local proxy server
-    const DISCORD_API_BASE_URL = 'http://localhost:8000/api';
-    const USER_AGENT = 'Discord-Mass-DM-Tool/1.0';
+    const PROXY_URL = 'http://localhost:8000/api';
 
     function log(message, type = 'info') {
         const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -211,14 +206,11 @@
 
     async function checkServerStatus() {
         try {
+            // Use a specific path for a lighter check
             const response = await fetch('http://localhost:8000', { method: 'HEAD', mode: 'no-cors' });
-            if (response) {
-                statusLight.className = 'status-light green';
-                statusText.textContent = 'Connected to local server!';
-                log('Connection to local proxy server successful.', 'info');
-            } else {
-                throw new Error('No response from server');
-            }
+            statusLight.className = 'status-light green';
+            statusText.textContent = 'Connected to local server!';
+            log('Connection to local proxy server successful.', 'info');
         } catch (error) {
             statusLight.className = 'status-light red';
             statusText.textContent = 'Local server is OFFLINE!';
@@ -229,15 +221,15 @@
 
     async function makeApiCall(endpoint, method = 'GET', body = null) {
         const token = tokenInput.value.trim();
-        const url = `${DISCORD_API_BASE_URL}${endpoint}`;
+        if (!token) {
+            throw new Error("Missing Discord Bot Token");
+        }
+        
+        const url = `${PROXY_URL}${endpoint}`;
         const headers = {
             'Authorization': `Bot ${token}`,
-            'User-Agent': USER_AGENT
+            'Content-Type': 'application/json'
         };
-
-        if (body) {
-            headers['Content-Type'] = 'application/json';
-        }
 
         const options = {
             method,
@@ -256,8 +248,7 @@
             }
             return await response.json();
         } catch (error) {
-            // Re-throw the error to be caught by the main try/catch block
-            throw error;
+            throw error; // Re-throw the error to be caught by the main try/catch block
         }
     }
 
@@ -286,6 +277,7 @@
         try {
             log(`Attempting to retrieve guild members with Guild ID: ${guildId}`, 'info');
             
+            // Fetch guild members (this requires the Server Members Intent)
             const members = await makeApiCall(`/guilds/${guildId}/members?limit=1000`);
             log(`Found ${members.length} members.`, 'info');
 
