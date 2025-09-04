@@ -1,96 +1,67 @@
-import http.server
-import socketserver
+from flask import Flask, request, jsonify, make_response
 import requests
+from flask_cors import CORS
 import json
-import re
 
-PORT = 8000
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
+
 DISCORD_API_BASE_URL = 'https://discord.com/api/v10'
 
-class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
-    def do_POST(self):
-        # Handle POST requests for creating DM channels and sending messages
-        try:
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length).decode('utf-8')
-            data = json.loads(post_data)
+# A proxy that forwards requests to the Discord API
+@app.route('/api/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
+def proxy_discord_api(path):
+    print(f"Proxying request to Discord API: {request.method} {path}")
+    try:
+        # Reconstruct the headers from the incoming request
+        headers = {key: value for key, value in request.headers if key.lower() not in ['host', 'connection']}
+        
+        # Add a custom User-Agent to comply with Discord's API policy
+        headers['User-Agent'] = 'Discord-Mass-DM-Tool/1.0'
 
-            # Extract token from the Authorization header
-            auth_header = self.headers.get('Authorization')
-            if not auth_header or not auth_header.startswith('Bot '):
-                self.send_error(401, 'Unauthorized')
-                return
+        # Get the request body if present
+        data = None
+        if request.data:
+            data = request.data
+        
+        # Forward the request to the Discord API
+        response = requests.request(
+            method=request.method,
+            url=f"{DISCORD_API_BASE_URL}/{path}",
+            headers=headers,
+            data=data
+        )
 
-            token = auth_header.split(' ')[1]
+        # Prepare the response to send back to the client
+        proxy_response = make_response(response.content, response.status_code)
 
-            # Determine the API endpoint based on the path
-            if self.path == '/api/users/@me/channels':
-                url = f"{DISCORD_API_BASE_URL}/users/@me/channels"
-                payload = {'recipient_id': data['recipient_id']}
-            elif re.match(r'/api/channels/\d+/messages', self.path):
-                url = f"{DISCORD_API_BASE_URL}{self.path}"
-                payload = {'content': data['content']}
-            else:
-                self.send_error(404, 'Not Found')
-                return
+        # Copy all headers from the original response
+        for key, value in response.headers.items():
+            proxy_response.headers[key] = value
 
-            headers = {
-                'Authorization': f'Bot {token}',
-                'Content-Type': 'application/json',
-                'User-Agent': 'Discord-Mass-DM-Tool/1.0'
-            }
-            
-            # Forward the request to the Discord API
-            discord_response = requests.post(url, headers=headers, json=payload)
-            
-            # Respond to the client with the Discord API's response
-            self.send_response(discord_response.status_code)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(discord_response.content)
+        # Set CORS headers on the response
+        proxy_response.headers['Access-Control-Allow-Origin'] = '*'
+        proxy_response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        proxy_response.headers['Access-Control-Allow-Headers'] = '*'
+        
+        print(f"Forwarded response with status code: {response.status_code}")
+        return proxy_response
 
-        except (ValueError, KeyError, json.JSONDecodeError) as e:
-            self.send_error(400, f'Bad Request: {e}')
-        except Exception as e:
-            self.send_error(500, f'Internal Server Error: {e}')
+    except requests.exceptions.RequestException as e:
+        print(f"Error during proxy request: {e}")
+        return jsonify({
+            "error": "Failed to proxy request",
+            "details": str(e)
+        }), 500
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return jsonify({
+            "error": "An unexpected error occurred",
+            "details": str(e)
+        }), 500
 
-    def do_GET(self):
-        # Handle GET requests for fetching guild members
-        try:
-            # Extract token from the Authorization header
-            auth_header = self.headers.get('Authorization')
-            if not auth_header or not auth_header.startswith('Bot '):
-                self.send_error(401, 'Unauthorized')
-                return
-            
-            token = auth_header.split(' ')[1]
-
-            # Check if the request is for guild members
-            match = re.match(r'/api/guilds/(\d+)/members\?limit=1000', self.path)
-            if match:
-                guild_id = match.group(1)
-                url = f"{DISCORD_API_BASE_URL}/guilds/{guild_id}/members?limit=1000"
-                headers = {
-                    'Authorization': f'Bot {token}',
-                    'User-Agent': 'Discord-Mass-DM-Tool/1.0'
-                }
-
-                # Forward the request to the Discord API
-                discord_response = requests.get(url, headers=headers)
-                
-                # Respond to the client with the Discord API's response
-                self.send_response(discord_response.status_code)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(discord_response.content)
-            else:
-                # Serve the HTML file for other GET requests
-                return http.server.SimpleHTTPRequestHandler.do_GET(self)
-
-        except Exception as e:
-            self.send_error(500, f'Internal Server Error: {e}')
-
-with socketserver.TCPServer(('', PORT), CORSProxyHandler) as httpd:
-    print(f"Serving Discord DM Tool with CORS proxy at http://localhost:{PORT}")
+if __name__ == '__main__':
+    print("Serving Discord DM Tool with CORS proxy at http://localhost:8000")
+    print("Make sure you have `pip install Flask requests Flask-Cors` installed.")
     print("Press Ctrl+C to stop the server.")
-    httpd.serve_forever()
+    app.run(port=8000)
